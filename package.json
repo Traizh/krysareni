@@ -1,0 +1,12 @@
+{
+  "name": "krysi-kolaps",
+  "version": "1.0.0",
+  "description": "Goofy multiplayer střílečka s krysami a sýrem",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": { "ws": "^8.18.0" },
+  "license": "MIT"
+}
