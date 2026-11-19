@@ -4,10 +4,12 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
-const S = require('./public/shared.js');
 
 const PORT = process.env.PORT || 3000;
-const PUB = path.join(__dirname, 'public');
+// Funguje s hrou ve složce public/ i když jsou soubory nahrané rovnou v kořeni repa.
+const PUB = fs.existsSync(path.join(__dirname, 'public', 'index.html')) ? path.join(__dirname, 'public') : __dirname;
+const S = require(path.join(PUB, 'shared.js'));
+const ALLOWED = new Set(['index.html', 'shared.js', 'config.js']);
 const TICK = 30;
 const MAX_HUMANS = 12;
 const TARGET_PLAYERS = 4;   // kolik krys má být v aréně (zbytek dorovnají boti)
@@ -25,7 +27,7 @@ const server = http.createServer((req, res) => {
   if (pathname === '/health') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
   if (pathname === '/') pathname = '/index.html';
   const file = path.normalize(path.join(PUB, pathname));
-  if (!file.startsWith(PUB + path.sep)) { res.writeHead(403); return res.end(); }
+  if (!file.startsWith(PUB + path.sep) || !ALLOWED.has(path.basename(file)) || path.dirname(file) !== PUB) { res.writeHead(404); return res.end('Nenalezeno'); }
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404); return res.end('Nenalezeno'); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
