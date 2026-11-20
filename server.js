@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 3000;
 // Funguje s hrou ve složce public/ i když jsou soubory nahrané rovnou v kořeni repa.
 const PUB = fs.existsSync(path.join(__dirname, 'public', 'index.html')) ? path.join(__dirname, 'public') : __dirname;
 const S = require(path.join(PUB, 'shared.js'));
-const ALLOWED = new Set(['index.html', 'shared.js', 'config.js']);
+const ALLOWED = new Set(['index.html', 'shared.js', 'config.js', 'three.module.min.js']);
 const TICK = 30;
 const MAX_HUMANS = 12;
 const TARGET_PLAYERS = 4;   // kolik krys má být v aréně (zbytek dorovnají boti)
@@ -42,15 +42,14 @@ const rnd = (a, b) => a + Math.random() * (b - a);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
 const KILL_TEXTS = [
-  (k, v) => `${k} zasypal ${v} sýrem`,
-  (k, v) => `${k} nakrmil ${v} cheddarem`,
-  (k, v) => `${k} poslal ${v} do kočičího nebe`,
   (k, v) => `${k} udělal z ${v} ementál`,
-  (k, v) => `${k} zpacifikoval ${v} tvarůžkem`,
+  (k, v) => `${k} prostřelil ${v} jako sýr`,
+  (k, v) => `${k} poslal ${v} do kočičího nebe`,
+  (k, v) => `${k} nakrmil ${v} olovem`,
   (k, v) => `${k} naučil ${v} létat`,
-  (k, v) => `${k} vtipně praštil ${v} gorgonzolou`,
-  (k, v) => `${v} dostal od ${k} sýrovou sprchu`,
+  (k, v) => `${v} dostal od ${k} pořádnou dávku`,
   (k, v) => `${k} ukázal ${v}, kdo je tu největší krysa`,
+  (k, v) => `${k} vyřídil ${v} jako profík`,
 ];
 
 class Room {
@@ -93,7 +92,7 @@ class Room {
       id: this.nextId++, ws: data.ws || null, bot: !!data.bot,
       name: data.name, hat: data.hat, color: data.color,
       x: 0, y: 0, a: 0, hp: S.MAX_HP, alive: false, respawnAt: 0,
-      score: 0, deaths: 0, cool: 0, rapid: 0, fast: 0, hit: 0, lastSq: 0,
+      score: 0, deaths: 0, cool: 0, weapon: 0, ammo: -1, fast: 0, hit: 0, lastSq: 0,
       input: { dx: 0, dy: 0, a: 0, s: false },
       ai: { retarget: 0, dir: 0, jitter: 0, t: 0 },
     };
@@ -131,7 +130,7 @@ class Room {
       if (md > bestD) { bestD = md; best = sp; }
     }
     p.x = best[0]; p.y = best[1]; p.hp = S.MAX_HP; p.alive = true;
-    p.rapid = 0; p.fast = 0; p.hit = 0; p.cool = 0.5;
+    p.weapon = 0; p.ammo = -1; p.fast = 0; p.hit = 0; p.cool = 0.5;
   }
 
   kill(victim, killer) {
@@ -186,7 +185,6 @@ class Room {
       if (p.bot) this.botThink(p);
       if (!p.alive) { if (now >= p.respawnAt) this.spawn(p); continue; }
       p.cool -= dt;
-      p.rapid = Math.max(0, p.rapid - dt);
       p.fast = Math.max(0, p.fast - dt);
       p.hit = Math.max(0, p.hit - dt);
       const inp = p.input;
@@ -199,10 +197,15 @@ class Room {
       const c = S.collide(p.x, p.y, R); p.x = c.x; p.y = c.y;
 
       if (inp.s && p.cool <= 0) {
-        p.cool = p.rapid > 0 ? 0.11 : 0.3;
+        const w = S.WEAPONS[p.weapon];
+        p.cool = w.cd;
         const m = S.muzzle(p.x, p.y, p.a);
-        this.bullets.push({ id: this.nextBullet++, o: p.id, x: m.x, y: m.y, a: p.a, life: 1.3, dmg: 18 });
-        if (this.bullets.length > 400) this.bullets.shift();
+        for (let i = 0; i < w.pellets; i++) {
+          const ang = p.a + (Math.random() * 2 - 1) * w.spread;
+          this.bullets.push({ id: this.nextBullet++, o: p.id, x: m.x, y: m.y, a: ang, sp: w.speed, w: p.weapon, life: w.life, dmg: w.dmg });
+        }
+        if (p.ammo > 0) { p.ammo--; if (p.ammo === 0) { p.weapon = 0; p.ammo = -1; } }
+        if (this.bullets.length > 700) this.bullets.splice(0, this.bullets.length - 700);
       }
     }
 
@@ -221,39 +224,43 @@ class Room {
     }
     for (const p of arr) { const c = S.collide(p.x, p.y, R); p.x = c.x; p.y = c.y; }
 
-    // střely
+    // střely (po podkrocích, rychlé kulky nesmí proletět krysou)
     const keep = [];
     for (const b of this.bullets) {
-      b.x += Math.cos(b.a) * S.BULLET_SPEED * dt;
-      b.y += Math.sin(b.a) * S.BULLET_SPEED * dt;
-      b.life -= dt;
-      if (b.life <= 0 || S.pointBlocked(b.x, b.y)) continue;
-      let hit = false;
-      for (const p of this.players.values()) {
-        if (!p.alive || p.id === b.o) continue;
-        if (Math.hypot(p.x - b.x, p.y - b.y) < R + 5) {
-          p.hp -= b.dmg; p.hit = 0.15; hit = true;
-          if (p.hp <= 0) {
-            const killer = this.players.get(b.o);
-            if (killer) this.kill(p, killer);
-            else { p.alive = false; p.deaths++; p.respawnAt = now + 2500; }
+      const steps = Math.max(1, Math.ceil((b.sp * dt) / 12));
+      const sd = dt / steps;
+      let dead = false;
+      for (let i = 0; i < steps && !dead; i++) {
+        b.x += Math.cos(b.a) * b.sp * sd;
+        b.y += Math.sin(b.a) * b.sp * sd;
+        if (S.pointBlocked(b.x, b.y)) { dead = true; break; }
+        for (const p of this.players.values()) {
+          if (!p.alive || p.id === b.o) continue;
+          if (Math.hypot(p.x - b.x, p.y - b.y) < R + 4) {
+            p.hp -= b.dmg; p.hit = 0.15; dead = true;
+            if (p.hp <= 0) {
+              const killer = this.players.get(b.o);
+              if (killer) this.kill(p, killer);
+              else { p.alive = false; p.deaths++; p.respawnAt = now + 2500; }
+            }
+            break;
           }
-          break;
         }
       }
-      if (!hit) keep.push(b);
+      b.life -= dt;
+      if (!dead && b.life > 0) keep.push(b);
     }
     this.bullets = keep;
 
     // bonusy
     this.pickT -= dt;
-    if (this.pickT <= 0 && this.pickups.length < 5) {
-      this.pickT = 6;
+    if (this.pickT <= 0 && this.pickups.length < 6) {
+      this.pickT = 5;
       for (let tries = 0; tries < 10; tries++) {
         const x = rnd(80, S.W - 80), y = rnd(80, S.H - 80);
         const c = S.collide(x, y, 26);
         if (Math.hypot(c.x - x, c.y - y) < 0.5) {
-          this.pickups.push({ id: this.nextBullet++, kind: Math.floor(rnd(0, 3)), x: Math.round(x), y: Math.round(y) });
+          this.pickups.push({ id: this.nextBullet++, kind: Math.floor(rnd(0, 5)), x: Math.round(x), y: Math.round(y) });
           break;
         }
       }
@@ -262,8 +269,8 @@ class Room {
       for (const p of this.players.values()) {
         if (!p.alive || Math.hypot(p.x - k.x, p.y - k.y) > R + 18) continue;
         if (k.kind === 0) p.hp = Math.min(S.MAX_HP, p.hp + 50);
-        else if (k.kind === 1) p.rapid = 8;
-        else p.fast = 8;
+        else if (k.kind === 4) p.fast = 8;
+        else { p.weapon = k.kind; p.ammo = S.WEAPONS[k.kind].ammo; }
         this.broadcast({ t: 'ev', k: 'pick', id: p.id, kind: k.kind, x: k.x, y: k.y });
         return false;
       }
@@ -275,9 +282,9 @@ class Room {
     for (const p of this.players.values()) {
       ps.push([p.id, Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, Math.round(p.a * 100) / 100,
         Math.max(0, Math.round(p.hp)), p.alive ? 1 : 0,
-        (p.rapid > 0 ? 1 : 0) | (p.fast > 0 ? 2 : 0) | (p.hit > 0 ? 4 : 0), p.score, p.deaths]);
+        (p.fast > 0 ? 2 : 0) | (p.hit > 0 ? 4 : 0), p.score, p.deaths, p.weapon, p.ammo]);
     }
-    const bs = this.bullets.map((b) => [b.id, Math.round(b.x), Math.round(b.y), Math.round(b.a * 100) / 100, b.o]);
+    const bs = this.bullets.map((b) => [b.id, Math.round(b.x), Math.round(b.y), Math.round(b.a * 100) / 100, b.o, b.w]);
     const ks = this.pickups.map((k) => [k.id, k.kind, k.x, k.y]);
     this.broadcast({ t: 's', p: ps, b: bs, k: ks });
   }

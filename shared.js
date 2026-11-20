@@ -8,6 +8,14 @@
   S.BULLET_SPEED = 650;
   S.MAX_HP = 100;
 
+  // Zbraně: cd = rychlost střelby (s), pellets = počet projektilů, ammo -1 = nekonečno
+  S.WEAPONS = [
+    { name: 'Pistole', cd: 0.32, dmg: 20, pellets: 1, spread: 0.015, speed: 900, life: 1.2, ammo: -1 },
+    { name: 'Samopal', cd: 0.085, dmg: 9, pellets: 1, spread: 0.055, speed: 850, life: 1.2, ammo: 60 },
+    { name: 'Brokovnice', cd: 0.85, dmg: 11, pellets: 7, spread: 0.12, speed: 750, life: 0.7, ammo: 14 },
+    { name: 'Odstřelovačka', cd: 1.15, dmg: 75, pellets: 1, spread: 0.002, speed: 1500, life: 1.2, ammo: 8 },
+  ];
+
   S.OBST = [
     { x: 330, y: 230, w: 180, h: 70, t: 'crate' },
     { x: 1290, y: 230, w: 180, h: 70, t: 'crate' },
@@ -66,7 +74,7 @@
   // Kde z krysy vylétne sýr (ústí sýrové pušky).
   S.muzzle = function (x, y, a) {
     const c = Math.cos(a), s = Math.sin(a);
-    return { x: x + c * 38 - s * 9, y: y + s * 38 + c * 9 };
+    return { x: x + c * 30, y: y + s * 30 };
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = S;

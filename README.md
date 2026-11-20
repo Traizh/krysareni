@@ -1,6 +1,6 @@
-# 🐀 Krysí kolaps – sýrová válka
+# 🐀 Krysí kolaps FPS – krysí válka
 
-Goofy multiplayer střílečka: krysy s čepicemi, sýrové pušky, šilhavé oči. Bez serveru nehraješ, server = Node + `ws`.
+Goofy multiplayer FPS: pohled z očí krysy, 4 zbraně (pistole, samopal, brokovnice, odstřelovačka), šilhavé krysy s čepicemi. Bez serveru nehraješ, server = Node + `ws`.
 
 - `server.js` – autoritativní server (Render), taky servíruje `public/`
 - `public/` – hra (`index.html`, `shared.js`, `config.js`)
@@ -33,5 +33,5 @@ Nahraj `itch/krysi-kolaps-itch.zip` jako **HTML**, zaškrtni *This file will be 
 viewport třeba 1280×760 + povol fullscreen. (Adresu serveru jde i změnit až ve hře: *Server (pokročilé)*.)
 
 ## Ovládání
-WASD / šipky – pohyb · myš – míření · klik – sýr · E – písknutí · M – zvuk
-Bonusy: 🩹 léčení, 🧀 rychlopalba, 🌶️ turbo. Kdo první dá 15 zásahů, vyhrává. Místnosti: `?room=kamaradi`.
+WASD – pohyb · myš – rozhlížení (klikni do hry, Esc uvolní myš) · levé tlačítko – střelba · E – písknutí · M – zvuk
+Po aréně leží zbraně (samopal, brokovnice, odstřelovačka), 🩹 lékárničky a 🌶️ turbo. Zbraň drží, dokud nedojdou náboje nebo nezemřeš. Kdo první dá 15 zabití, vyhrává. Místnosti: `?room=kamaradi`.
