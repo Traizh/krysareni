@@ -41,6 +41,12 @@ const rooms = new Map();
 const rnd = (a, b) => a + Math.random() * (b - a);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
+const KNIFE_TEXTS = [
+  (k, v) => `${k} podřízl ${v} jako sýr`,
+  (k, v) => `${k} nakrájel ${v} na plátky`,
+  (k, v) => `${k} podrazil ${v} nožem`,
+  (k, v) => `${k} zapíchl ${v} jako špekáček`,
+];
 const KILL_TEXTS = [
   (k, v) => `${k} udělal z ${v} ementál`,
   (k, v) => `${k} prostřelil ${v} jako sýr`,
@@ -92,8 +98,8 @@ class Room {
       id: this.nextId++, ws: data.ws || null, bot: !!data.bot,
       name: data.name, hat: data.hat, color: data.color,
       x: 0, y: 0, a: 0, hp: S.MAX_HP, alive: false, respawnAt: 0,
-      score: 0, deaths: 0, cool: 0, weapon: 0, ammo: -1, fast: 0, hit: 0, lastSq: 0,
-      input: { dx: 0, dy: 0, a: 0, s: false },
+      score: 0, deaths: 0, cool: 0, mcool: 0, weapon: 0, ammo: -1, fast: 0, hit: 0, lastSq: 0,
+      input: { dx: 0, dy: 0, a: 0, s: false, m: false },
       ai: { retarget: 0, dir: 0, jitter: 0, t: 0 },
     };
     this.players.set(p.id, p);
@@ -133,14 +139,14 @@ class Room {
     p.weapon = 0; p.ammo = -1; p.fast = 0; p.hit = 0; p.cool = 0.5;
   }
 
-  kill(victim, killer) {
+  kill(victim, killer, how) {
     victim.alive = false; victim.deaths++;
     victim.respawnAt = Date.now() + 2500;
     killer.score++;
     killer.hp = Math.min(S.MAX_HP, killer.hp + 25);
     this.broadcast({
       t: 'ev', k: 'kill', k1: killer.id, v: victim.id, x: Math.round(victim.x), y: Math.round(victim.y),
-      text: pick(KILL_TEXTS)(killer.name, victim.name),
+      text: pick(how === 'knife' ? KNIFE_TEXTS : KILL_TEXTS)(killer.name, victim.name),
     });
     if (killer.score >= WIN_SCORE) {
       this.broadcast({ t: 'ev', k: 'win', text: `${killer.name} vyhrál sýrovou válku! 🧀👑` });
@@ -173,6 +179,7 @@ class Room {
     p.input.dx = mx; p.input.dy = my;
     p.input.a = ang + ai.jitter;
     p.input.s = td < 600 && Math.random() < 0.7;
+    p.input.m = td < 50;
   }
 
   tick() {
@@ -185,6 +192,7 @@ class Room {
       if (p.bot) this.botThink(p);
       if (!p.alive) { if (now >= p.respawnAt) this.spawn(p); continue; }
       p.cool -= dt;
+      p.mcool -= dt;
       p.fast = Math.max(0, p.fast - dt);
       p.hit = Math.max(0, p.hit - dt);
       const inp = p.input;
@@ -196,16 +204,47 @@ class Room {
       p.a = inp.a;
       const c = S.collide(p.x, p.y, R); p.x = c.x; p.y = c.y;
 
+      if (inp.m && p.mcool <= 0) {
+        p.mcool = 0.6;
+        this.broadcast({ t: 'ev', k: 'stab', id: p.id });
+        let best = null, bd = 1e9;
+        for (const o of this.players.values()) {
+          if (o === p || !o.alive) continue;
+          const ddx = o.x - p.x, ddy = o.y - p.y, d = Math.hypot(ddx, ddy);
+          if (d > 64) continue;
+          let da = Math.atan2(ddy, ddx) - p.a; da = Math.atan2(Math.sin(da), Math.cos(da));
+          if (Math.abs(da) > 0.95 || d >= bd) continue;
+          best = o; bd = d;
+        }
+        if (best) {
+          let ba = best.a - p.a; ba = Math.atan2(Math.sin(ba), Math.cos(ba));
+          best.hp -= Math.abs(ba) < 1.2 ? 100 : 55;   // zezadu = okamžitá smrt
+          best.hit = 0.2;
+          if (best.hp <= 0) this.kill(best, p, 'knife');
+        }
+      }
       if (inp.s && p.cool <= 0) {
+        // Hitscan: kulka letí tak rychle, že dolétne okamžitě (jako ve skutečnosti).
         const w = S.WEAPONS[p.weapon];
         p.cool = w.cd;
         const m = S.muzzle(p.x, p.y, p.a);
+        const ends = [];
         for (let i = 0; i < w.pellets; i++) {
           const ang = p.a + (Math.random() * 2 - 1) * w.spread;
-          this.bullets.push({ id: this.nextBullet++, o: p.id, x: m.x, y: m.y, a: ang, sp: w.speed, w: p.weapon, life: w.life, dmg: w.dmg });
+          let bt = S.rayWall(m.x, m.y, ang, 2600), best = null;
+          for (const o of this.players.values()) {
+            if (!o.alive || o === p) continue;
+            const t = S.rayCircle(m.x, m.y, ang, o.x, o.y, R + 3);
+            if (t !== null && t < bt) { bt = t; best = o; }
+          }
+          ends.push([Math.round(m.x + Math.cos(ang) * bt), Math.round(m.y + Math.sin(ang) * bt)]);
+          if (best && best.alive) {
+            best.hp -= w.dmg; best.hit = 0.15;
+            if (best.hp <= 0) this.kill(best, p);
+          }
         }
+        this.broadcast({ t: 'ev', k: 'shot', o: p.id, w: p.weapon, x: Math.round(m.x), y: Math.round(m.y), e: ends });
         if (p.ammo > 0) { p.ammo--; if (p.ammo === 0) { p.weapon = 0; p.ammo = -1; } }
-        if (this.bullets.length > 700) this.bullets.splice(0, this.bullets.length - 700);
       }
     }
 
@@ -339,6 +378,7 @@ wss.on('connection', (ws) => {
       me.input.dy = Math.max(-1, Math.min(1, num(m.dy)));
       me.input.a = num(m.a, me.input.a);
       me.input.s = !!m.s;
+      me.input.m = !!m.m;
     } else if (m.t === 'sq') {
       const now = Date.now();
       if (now - me.lastSq > 700 && me.alive) {

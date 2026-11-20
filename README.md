@@ -33,5 +33,5 @@ Nahraj `itch/krysi-kolaps-itch.zip` jako **HTML**, zaškrtni *This file will be 
 viewport třeba 1280×760 + povol fullscreen. (Adresu serveru jde i změnit až ve hře: *Server (pokročilé)*.)
 
 ## Ovládání
-WASD – pohyb · myš – rozhlížení (klikni do hry, Esc uvolní myš) · levé tlačítko – střelba · E – písknutí · M – zvuk
+WASD – pohyb · myš – rozhlížení (klikni do hry, Esc uvolní myš) · levé tlačítko – střelba · pravé tlačítko / F – nůž (zezadu zabíjí hned) · E – písknutí · M – zvuk
 Po aréně leží zbraně (samopal, brokovnice, odstřelovačka), 🩹 lékárničky a 🌶️ turbo. Zbraň drží, dokud nedojdou náboje nebo nezemřeš. Kdo první dá 15 zabití, vyhrává. Místnosti: `?room=kamaradi`.

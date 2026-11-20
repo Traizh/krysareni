@@ -10,10 +10,10 @@
 
   // Zbraně: cd = rychlost střelby (s), pellets = počet projektilů, ammo -1 = nekonečno
   S.WEAPONS = [
-    { name: 'Pistole', cd: 0.32, dmg: 20, pellets: 1, spread: 0.015, speed: 900, life: 1.2, ammo: -1 },
-    { name: 'Samopal', cd: 0.085, dmg: 9, pellets: 1, spread: 0.055, speed: 850, life: 1.2, ammo: 60 },
-    { name: 'Brokovnice', cd: 0.85, dmg: 11, pellets: 7, spread: 0.12, speed: 750, life: 0.7, ammo: 14 },
-    { name: 'Odstřelovačka', cd: 1.15, dmg: 75, pellets: 1, spread: 0.002, speed: 1500, life: 1.2, ammo: 8 },
+    { name: 'Pistole', cd: 0.32, dmg: 20, pellets: 1, spread: 0.015, speed: 2400, life: 0.85, ammo: -1 },
+    { name: 'Samopal', cd: 0.085, dmg: 9, pellets: 1, spread: 0.055, speed: 2300, life: 0.85, ammo: 60 },
+    { name: 'Brokovnice', cd: 0.85, dmg: 11, pellets: 7, spread: 0.12, speed: 2000, life: 0.45, ammo: 14 },
+    { name: 'Odstřelovačka', cd: 1.15, dmg: 75, pellets: 1, spread: 0.002, speed: 4500, life: 0.55, ammo: 8 },
   ];
 
   S.OBST = [
@@ -61,6 +61,30 @@
       }
     }
     return { x, y };
+  };
+
+  // Vzdálenost, kam dolétne paprsek (x,y,úhel) než narazí do zdi/překážky (hitscan střelba).
+  S.rayWall = function (x, y, a, range) {
+    const dx = Math.cos(a), dy = Math.sin(a);
+    let t = range;
+    if (dx > 1e-9) t = Math.min(t, (S.W - x) / dx); else if (dx < -1e-9) t = Math.min(t, -x / dx);
+    if (dy > 1e-9) t = Math.min(t, (S.H - y) / dy); else if (dy < -1e-9) t = Math.min(t, -y / dy);
+    for (const o of S.OBST) {
+      let t0 = 0, t1 = t;
+      if (Math.abs(dx) < 1e-9) { if (x < o.x || x > o.x + o.w) continue; }
+      else { let a1 = (o.x - x) / dx, a2 = (o.x + o.w - x) / dx; if (a1 > a2) { const q = a1; a1 = a2; a2 = q; } t0 = Math.max(t0, a1); t1 = Math.min(t1, a2); }
+      if (Math.abs(dy) < 1e-9) { if (y < o.y || y > o.y + o.h) continue; }
+      else { let b1 = (o.y - y) / dy, b2 = (o.y + o.h - y) / dy; if (b1 > b2) { const q = b1; b1 = b2; b2 = q; } t0 = Math.max(t0, b1); t1 = Math.min(t1, b2); }
+      if (t0 <= t1 && t0 < t) t = t0;
+    }
+    return Math.max(0, t);
+  };
+  // Průsečík paprsku s kruhem (krysou); null = mine.
+  S.rayCircle = function (x, y, a, cx, cy, r) {
+    const dx = Math.cos(a), dy = Math.sin(a), ox = cx - x, oy = cy - y;
+    const proj = ox * dx + oy * dy; if (proj < 0) return null;
+    const d2 = ox * ox + oy * oy - proj * proj; if (d2 > r * r) return null;
+    return proj - Math.sqrt(r * r - d2);
   };
 
   S.pointBlocked = function (x, y) {
