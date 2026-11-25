@@ -55,6 +55,7 @@
   #cross::before, #cross::after { content: ""; position: absolute; background: #fff; box-shadow: 0 0 2px #000, 0 0 2px #000; }
   #cross::before { left: 10px; top: 0; width: 2px; height: 22px; -webkit-mask: linear-gradient(#000 0 7px, transparent 7px 15px, #000 15px); mask: linear-gradient(#000 0 7px, transparent 7px 15px, #000 15px); }
   #cross::after { top: 10px; left: 0; height: 2px; width: 22px; -webkit-mask: linear-gradient(90deg, #000 0 7px, transparent 7px 15px, #000 15px); mask: linear-gradient(90deg, #000 0 7px, transparent 7px 15px, #000 15px); }
+  #cross.hit::before, #cross.hit::after { background: #ff3030; }
   #ammo { position: absolute; right: 16px; bottom: 150px; text-align: right; font-size: 30px; font-weight: bold; text-shadow: 3px 3px 0 #000; }
   #ammo small { display: block; font-size: 15px; opacity: .85; }
   #radar { position: absolute; right: 12px; bottom: 12px; width: 200px; height: 122px; background: #0007; border: 3px solid #3b2410; border-radius: 10px; }
@@ -504,10 +505,12 @@ function addTracer(x, z, a, y = 20) {
 }
 const streakMat = new THREE.MeshBasicMaterial({ color: 0xfff1b0 });
 let streaks = [];
-function addStreak(x1, z1, x2, z2, y = 18) {
-  const len = Math.hypot(x2 - x1, z2 - z1); if (len < 1) return;
+const _ax = new THREE.Vector3(1, 0, 0), _dir = new THREE.Vector3();
+function addStreak(x1, z1, x2, z2, y1 = 18, y2 = 18) {
+  _dir.set(x2 - x1, y2 - y1, z2 - z1); const len = _dir.length(); if (len < 1) return;
+  _dir.normalize();
   const m = new THREE.Mesh(boxGeo, streakMat); m.scale.set(len, 1.2, 1.2);
-  m.position.set((x1 + x2) / 2, y, (z1 + z2) / 2); m.rotation.y = -Math.atan2(z2 - z1, x2 - x1); scene.add(m);
+  m.position.set((x1 + x2) / 2, (y1 + y2) / 2, (z1 + z2) / 2); m.quaternion.setFromUnitVectors(_ax, _dir); scene.add(m);
   streaks.push({ m, life: 0.12, max: 0.12 });
 }
 const crumbMat = lam(0xffd23f, { emissive: 0x886600 });
@@ -606,7 +609,7 @@ function onMsg(m) {
 function onSnapshot(m) {
   const now = performance.now();
   const pm = {}; for (const p of m.p) pm[p[0]] = p;
-  const snap = { t: now, pm, list: m.p };
+  const snap = { t: now, T: m.T || 0, pm, list: m.p };
   snaps.push(snap); if (snaps.length > 8) snaps.shift();
 
   for (const p of m.p) {
@@ -668,8 +671,11 @@ function onEvent(m) {
     if (m.o !== myId) {
       const d = Math.hypot(m.x - local.x, m.y - local.y);
       sfx.gun(m.w | 0, Math.max(0, 0.8 - d / 1300));
-      for (const e of m.e) { addStreak(m.x, m.y, e[0], e[1], 18); addCrumbs(e[0], e[1], 1, 18); }
+      for (const e of m.e) { addStreak(m.x, m.y, e[0], e[1], 18, e[2] == null ? 18 : e[2]); addCrumbs(e[0], e[1], 1, e[2] || 18); }
     }
+  } else if (m.k === 'hm') {
+    const c = $('cross'); c.classList.add('hit'); setTimeout(() => c.classList.remove('hit'), m.kl ? 260 : 110);
+    tone('square', m.kl ? 1400 : 900, m.kl ? 600 : 700, 0.05, 0.7);
   } else if (m.k === 'stab') {
     const r = rats[m.id]; if (r) r.stabT = performance.now() + 250;
     const s = snaps[snaps.length - 1]; const p = s && s.pm[m.id];
@@ -732,12 +738,24 @@ function inputVec() {
   const c = Math.cos(yaw), s = Math.sin(yaw);
   return { dx: f * c - r * s, dy: f * s + r * c };
 }
-function sendNow(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
-setInterval(() => {
+let viewT = 0;       // serverový čas snímku, který právě vidíš (pro kompenzaci lagu)
+function computeViewT(rt) {
+  const n = snaps.length; if (!n) return 0;
+  let s0 = null, s1 = null;
+  for (let i = n - 1; i >= 0; i--) { if (snaps[i].t <= rt) { s0 = snaps[i]; s1 = snaps[i + 1] || null; break; } }
+  if (!s0) return snaps[0].T;
+  if (!s1) return s0.T;
+  return s0.T + Math.max(0, Math.min(1, (rt - s0.t) / (s1.t - s0.t))) * (s1.T - s0.T);
+}
+function sendInput(shot) {
   if (!playing) return;
   const v = inputVec();
-  sendNow({ t: 'in', dx: +v.dx.toFixed(3), dy: +v.dy.toFixed(3), a: +yaw.toFixed(3), s: mouseDown && myAlive && locked ? 1 : 0, m: (meleeDown || keys['f']) && myAlive && locked ? 1 : 0 });
-}, 33);
+  sendNow({ t: 'in', dx: +v.dx.toFixed(3), dy: +v.dy.toFixed(3), a: +yaw.toFixed(4), p: +pitch.toFixed(4), vt: Math.round(viewT),
+    s: shot || (mouseDown && myAlive && locked) ? 1 : 0, m: (meleeDown || keys['f']) && myAlive && locked ? 1 : 0 });
+}
+function sendNow(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+setInterval(() => sendInput(false), 33);
+
 
 $('play').onclick = () => {
   audio(); lockMouse();
@@ -778,17 +796,19 @@ function update(dt) {
     if ((meleeDown || keys['f']) && locked && localMCool <= 0) { localMCool = 0.6; vm.stab = 0.32; sfx.stab(0.9); shake = Math.max(shake, 3); }
     if (mouseDown && locked && localCool <= 0 && vm.stab <= 0) {
       const w = W[myWeapon] || W[0];
-      localCool = w.cd;
+      localCool = Math.ceil(w.cd * 30) / 30 * 1.02;
+      sendInput(true);                                   // yaw/pitch/čas přesně v okamžiku výstřelu
       sfx.gun(myWeapon, 0.9); shake = Math.max(shake, myWeapon === 2 ? 6 : myWeapon === 3 ? 8 : 2);
       vm.recoil = Math.min(1.4, vm.recoil + (myWeapon === 2 ? 1 : myWeapon === 3 ? 1.2 : myWeapon === 1 ? 0.35 : 0.7)); vm.flash = 0.05;
-      pitch += myWeapon === 3 ? 0.03 : myWeapon === 2 ? 0.025 : 0.006;
-      const m = S.muzzle(local.x, local.y, yaw);
+      const m = S.muzzle(local.x, local.y, yaw), slope = Math.tan(pitch);
       for (let i = 0; i < w.pellets; i++) {
         const a = yaw + (Math.random() * 2 - 1) * w.spread;
-        const d = S.rayWall(m.x, m.y, a, 2600);
-        addStreak(m.x, m.y, m.x + Math.cos(a) * d, m.y + Math.sin(a) * d, 18);
-        if (d < 2500) addCrumbs(m.x + Math.cos(a) * d, m.y + Math.sin(a) * d, 2, 18);
+        const d = S.rayWall(local.x, local.y, a, 2600, S.EYE, slope);
+        const ez = Math.max(0, S.EYE + slope * d);
+        addStreak(m.x, m.y, local.x + Math.cos(a) * d, local.y + Math.sin(a) * d, 18, ez);
+        if (d < 2500) addCrumbs(local.x + Math.cos(a) * d, local.y + Math.sin(a) * d, 2, Math.max(2, ez));
       }
+      pitch += myWeapon === 3 ? 0.03 : myWeapon === 2 ? 0.025 : 0.006;
     }
   } else { deadT += dt; }
   vm.stab = Math.max(0, vm.stab - dt); vm.recoil = Math.max(0, vm.recoil - dt * 8); vm.raise = Math.max(0, vm.raise - dt * 4); vm.flash = Math.max(0, vm.flash - dt);
@@ -862,6 +882,7 @@ function draw(now) {
   const t = now / 1000, pn = performance.now();
   if (playing && snaps.length) {
     const rt = pn - 100;
+    viewT = computeViewT(rt);
     const last = snaps[snaps.length - 1];
     const seen = new Set();
     for (const p of last.list) {

@@ -63,10 +63,20 @@
     return { x, y };
   };
 
-  // Vzdálenost, kam dolétne paprsek (x,y,úhel) než narazí do zdi/překážky (hitscan střelba).
-  S.rayWall = function (x, y, a, range) {
+  S.OH = { crate: 80, cheese: 110, fridge: 170 };   // výšky překážek
+  S.CEIL = 230;                                     // strop
+  S.EYE = 26;                                       // výška očí krysy
+  S.RAT_H = 40;                                     // výška krysy i s čepicí
+
+  // Kam dolétne 3D paprsek (výchozí bod x,y ve výšce h0, sklon slope = tan(pitch)),
+  // než narazí do zdi, překážky, podlahy nebo stropu. Vrací vzdálenost v rovině.
+  S.rayWall = function (x, y, a, range, h0, slope) {
+    if (h0 === undefined) h0 = S.EYE;
+    slope = slope || 0;
     const dx = Math.cos(a), dy = Math.sin(a);
     let t = range;
+    if (slope > 1e-9) t = Math.min(t, (S.CEIL - h0) / slope);
+    else if (slope < -1e-9) t = Math.min(t, h0 / -slope);
     if (dx > 1e-9) t = Math.min(t, (S.W - x) / dx); else if (dx < -1e-9) t = Math.min(t, -x / dx);
     if (dy > 1e-9) t = Math.min(t, (S.H - y) / dy); else if (dy < -1e-9) t = Math.min(t, -y / dy);
     for (const o of S.OBST) {
@@ -75,16 +85,25 @@
       else { let a1 = (o.x - x) / dx, a2 = (o.x + o.w - x) / dx; if (a1 > a2) { const q = a1; a1 = a2; a2 = q; } t0 = Math.max(t0, a1); t1 = Math.min(t1, a2); }
       if (Math.abs(dy) < 1e-9) { if (y < o.y || y > o.y + o.h) continue; }
       else { let b1 = (o.y - y) / dy, b2 = (o.y + o.h - y) / dy; if (b1 > b2) { const q = b1; b1 = b2; b2 = q; } t0 = Math.max(t0, b1); t1 = Math.min(t1, b2); }
-      if (t0 <= t1 && t0 < t) t = t0;
+      if (t0 > t1 || t0 >= t) continue;
+      const oh = S.OH[o.t] || 80;
+      if (h0 + slope * t0 <= oh) { t = t0; }                                   // narazí do boku
+      else if (slope < -1e-9) { const tt = (h0 - oh) / -slope; if (tt <= t1 && tt < t) t = Math.max(t0, tt); }  // dopadne na vršek
     }
     return Math.max(0, t);
   };
-  // Průsečík paprsku s kruhem (krysou); null = mine.
-  S.rayCircle = function (x, y, a, cx, cy, r) {
-    const dx = Math.cos(a), dy = Math.sin(a), ox = cx - x, oy = cy - y;
-    const proj = ox * dx + oy * dy; if (proj < 0) return null;
-    const d2 = ox * ox + oy * oy - proj * proj; if (d2 > r * r) return null;
-    return proj - Math.sqrt(r * r - d2);
+
+  // Průsečík paprsku s elipsou krysy (rx podél směru těla, ry napříč). null = mine.
+  S.rayEllipse = function (x, y, a, cx, cy, facing, rx, ry) {
+    const cf = Math.cos(facing), sf = Math.sin(facing);
+    const ox = x - cx, oy = y - cy, dx = Math.cos(a), dy = Math.sin(a);
+    const lx = (ox * cf + oy * sf) / rx, ly = (-ox * sf + oy * cf) / ry;
+    const ldx = (dx * cf + dy * sf) / rx, ldy = (-dx * sf + dy * cf) / ry;
+    const A = ldx * ldx + ldy * ldy, B = lx * ldx + ly * ldy, C = lx * lx + ly * ly - 1;
+    const disc = B * B - A * C; if (disc < 0 || A < 1e-12) return null;
+    const t = (-B - Math.sqrt(disc)) / A;
+    if (t < 0) return C < 0 ? 0 : null;
+    return t;
   };
 
   S.pointBlocked = function (x, y) {

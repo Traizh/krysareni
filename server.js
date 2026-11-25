@@ -67,6 +67,7 @@ class Room {
     this.nextId = 1;
     this.nextBullet = 1;
     this.pickT = 3;
+    this.hist = [];
     this.time = 0;
     this.timer = setInterval(() => this.tick(), 1000 / TICK);
   }
@@ -99,7 +100,7 @@ class Room {
       name: data.name, hat: data.hat, color: data.color,
       x: 0, y: 0, a: 0, hp: S.MAX_HP, alive: false, respawnAt: 0,
       score: 0, deaths: 0, cool: 0, mcool: 0, weapon: 0, ammo: -1, fast: 0, hit: 0, lastSq: 0,
-      input: { dx: 0, dy: 0, a: 0, s: false, m: false },
+      input: { dx: 0, dy: 0, a: 0, s: false, m: false, sp: false, spT: 0, pitch: 0, vt: 0, rt: 0 },
       ai: { retarget: 0, dir: 0, jitter: 0, t: 0 },
     };
     this.players.set(p.id, p);
@@ -152,6 +153,24 @@ class Room {
       this.broadcast({ t: 'ev', k: 'win', text: `${killer.name} vyhrál sýrovou válku! 🧀👑` });
       for (const p of this.players.values()) { p.score = 0; p.deaths = 0; }
     }
+  }
+
+  rewind(vt) {
+    const h = this.hist;
+    if (h.length < 2) return null;
+    if (vt >= h[h.length - 1].T) return h[h.length - 1].p;
+    if (vt <= h[0].T) return h[0].p;
+    for (let i = h.length - 1; i > 0; i--) {
+      if (h[i - 1].T <= vt) {
+        const a = h[i - 1], b = h[i], f = (vt - a.T) / Math.max(1, b.T - a.T), out = {};
+        for (const id in b.p) {
+          const pa = a.p[id], pb = b.p[id];
+          out[id] = pa ? [pa[0] + (pb[0] - pa[0]) * f, pa[1] + (pb[1] - pa[1]) * f, pb[2]] : pb;
+        }
+        return out;
+      }
+    }
+    return null;
   }
 
   botThink(p) {
@@ -223,27 +242,39 @@ class Room {
           if (best.hp <= 0) this.kill(best, p, 'knife');
         }
       }
-      if (inp.s && p.cool <= 0) {
-        // Hitscan: kulka letí tak rychle, že dolétne okamžitě (jako ve skutečnosti).
+      const wantShot = inp.s || (inp.sp && now - inp.spT < 150);
+      if (wantShot && p.cool <= 0) {
+        // Hitscan s kompenzací lagu: cíle se "přetočí" na místo, kam se střelec díval.
+        inp.sp = false;
         const w = S.WEAPONS[p.weapon];
         p.cool = w.cd;
+        const h0 = S.EYE, slope = Math.tan(Math.max(-1.4, Math.min(1.4, inp.pitch || 0)));
         const m = S.muzzle(p.x, p.y, p.a);
+        const vt0 = inp.vt ? inp.vt + (now - inp.rt) : now;
+        const rew = this.rewind(Math.min(now, Math.max(vt0, now - 400)));
         const ends = [];
+        let landed = 0, killed = false;
         for (let i = 0; i < w.pellets; i++) {
           const ang = p.a + (Math.random() * 2 - 1) * w.spread;
-          let bt = S.rayWall(m.x, m.y, ang, 2600), best = null;
+          let bt = S.rayWall(p.x, p.y, ang, 2600, h0, slope), best = null;
           for (const o of this.players.values()) {
             if (!o.alive || o === p) continue;
-            const t = S.rayCircle(m.x, m.y, ang, o.x, o.y, R + 3);
-            if (t !== null && t < bt) { bt = t; best = o; }
+            const rp = rew && rew[o.id];
+            const ex = rp ? rp[0] : o.x, ey = rp ? rp[1] : o.y, ef = rp ? rp[2] : o.a;
+            // hitbox sedí na model: tělo + hlava, ocas se nepočítá (střed posunutý dopředu)
+            const t = S.rayEllipse(p.x, p.y, ang, ex + Math.cos(ef) * 7, ey + Math.sin(ef) * 7, ef, 28, 16);
+            if (t === null || t >= bt) continue;
+            const hh = h0 + slope * t;
+            if (hh >= 0 && hh <= S.RAT_H) { bt = t; best = o; }
           }
-          ends.push([Math.round(m.x + Math.cos(ang) * bt), Math.round(m.y + Math.sin(ang) * bt)]);
+          ends.push([Math.round(p.x + Math.cos(ang) * bt), Math.round(p.y + Math.sin(ang) * bt), Math.max(0, Math.round(h0 + slope * bt))]);
           if (best && best.alive) {
-            best.hp -= w.dmg; best.hit = 0.15;
-            if (best.hp <= 0) this.kill(best, p);
+            landed++; best.hp -= w.dmg; best.hit = 0.15;
+            if (best.hp <= 0) { this.kill(best, p); killed = true; }
           }
         }
         this.broadcast({ t: 'ev', k: 'shot', o: p.id, w: p.weapon, x: Math.round(m.x), y: Math.round(m.y), e: ends });
+        if (landed) this.send(p, { t: 'ev', k: 'hm', kl: killed ? 1 : 0 });
         if (p.ammo > 0) { p.ammo--; if (p.ammo === 0) { p.weapon = 0; p.ammo = -1; } }
       }
     }
@@ -316,6 +347,11 @@ class Room {
       return true;
     });
 
+    const hp = {};
+    for (const p of this.players.values()) hp[p.id] = [p.x, p.y, p.a];
+    this.hist.push({ T: now, p: hp });
+    if (this.hist.length > 30) this.hist.shift();
+
     // snapshot
     const ps = [];
     for (const p of this.players.values()) {
@@ -325,7 +361,7 @@ class Room {
     }
     const bs = this.bullets.map((b) => [b.id, Math.round(b.x), Math.round(b.y), Math.round(b.a * 100) / 100, b.o, b.w]);
     const ks = this.pickups.map((k) => [k.id, k.kind, k.x, k.y]);
-    this.broadcast({ t: 's', p: ps, b: bs, k: ks });
+    this.broadcast({ t: 's', T: now, p: ps, b: bs, k: ks });
   }
 
   destroy() { clearInterval(this.timer); }
@@ -379,6 +415,10 @@ wss.on('connection', (ws) => {
       me.input.a = num(m.a, me.input.a);
       me.input.s = !!m.s;
       me.input.m = !!m.m;
+      me.input.pitch = Math.max(-1.4, Math.min(1.4, num(m.p)));
+      me.input.vt = num(m.vt, 0);
+      me.input.rt = Date.now();
+      if (m.s) { me.input.sp = true; me.input.spT = Date.now(); }
     } else if (m.t === 'sq') {
       const now = Date.now();
       if (now - me.lastSq > 700 && me.alive) {
